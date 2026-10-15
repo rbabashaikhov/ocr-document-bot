@@ -67,4 +67,17 @@ OCR_ENABLE_VISUAL_TABLE_DETECTION=true uv run python -m ocr_document_bot.render_
 
 Only geometrically confirmed (`detected`) grids become Word tables. Ambiguous or absent grids preserve the existing OCR block flow.
 
+## Local Telegram bot
+
+The optional aiogram 3 adapter accepts JPG/PNG images, sends simple results of at most `OCR_INLINE_TEXT_MAX_CHARS` directly to the chat, and sends DOCX for tables or longer content. Inline results include a “Получить DOCX” button. OCR is called only after a user sends an image; starting the bot itself does not invoke Yandex Vision.
+
+Set `TELEGRAM_BOT_TOKEN` in the untracked `.env`. Before long polling, the adapter calls Telegram `getWebhookInfo` and refuses to start if a webhook is configured. It does not call `deleteWebhook`, so it does not alter a running n8n integration.
+
+```bash
+uv sync --locked
+uv run python -m ocr_document_bot.telegram_bot
+```
+
+Use a dedicated development bot token for manual testing. Stop the local process with `Ctrl+C`; the optional DOCX button cache is in memory and is cleared when the process stops.
+
 See [architecture](docs/ARCHITECTURE.md) and the [OCR-001 report](docs/OCR-001-REPORT.md).

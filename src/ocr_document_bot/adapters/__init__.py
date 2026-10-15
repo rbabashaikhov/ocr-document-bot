@@ -1,1 +1,5 @@
-"""Inbound transport boundaries. No transport is implemented in OCR-001."""
+"""Inbound transport boundaries."""
+
+from .telegram import PollingSafetyError, TelegramAdapter, TelegramOCRService
+
+__all__ = ["PollingSafetyError", "TelegramAdapter", "TelegramOCRService"]
