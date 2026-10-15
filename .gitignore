@@ -8,3 +8,9 @@ build/
 dist/
 *.egg-info/
 13.2_recognize file tg.json
+fixtures/vision/*.json
+local-testdata/
+tests/samples/
+artifacts/ocr-004b/
+artifacts/ocr-004c/
+artifacts/ocr-004d/

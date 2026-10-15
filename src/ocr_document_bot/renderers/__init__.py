@@ -1,1 +1,3 @@
-"""Outbound document-renderer boundary. DOCX/Markdown implementations are deferred."""
+from .docx_renderer import DocxRenderer
+
+__all__ = ["DocxRenderer"]

@@ -1,4 +1,5 @@
 from .models import (
+    BoundingBox,
     DocumentModel,
     InputFile,
     JobStatus,
@@ -11,6 +12,6 @@ from .models import (
 )
 
 __all__ = [
-    "DocumentModel", "InputFile", "JobStatus", "OCRJob", "OCRJobError",
+    "BoundingBox", "DocumentModel", "InputFile", "JobStatus", "OCRJob", "OCRJobError",
     "Page", "Table", "TableCell", "TextBlock",
 ]

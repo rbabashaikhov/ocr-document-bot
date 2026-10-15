@@ -1,3 +1,3 @@
-from .yandex_vision import YandexVisionConfig
+from .yandex_vision import YandexVisionClient, YandexVisionConfig
 
-__all__ = ["YandexVisionConfig"]
+__all__ = ["YandexVisionClient", "YandexVisionConfig"]

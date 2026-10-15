@@ -49,3 +49,16 @@ The OCR-001 scope has one process-local use case and no actual concurrent adapte
 ## Configuration and security
 
 All future configuration comes from environment variables. `.env.example` names expected variables but contains no values. Prefer a service account with a scoped, expiring API key or an IAM-token flow, minimum service role required by current Vision documentation, secret injection on the VPS, and rotation. The exact role and current API endpoint must be rechecked during OCR-002 because Yandex's current API reference has moved to AI Studio.
+
+## Deferred requirement: Smart Output Delivery
+
+This is a product requirement recorded for the renderer stage, not an OCR-002 implementation. A future provider-neutral `OutputPolicy` module will accept a `DocumentModel`, an optional user-selected output format, and `OCR_INLINE_TEXT_MAX_CHARS` (default `2500`). It will return a delivery decision; Telegram and Email adapters will only carry out that decision.
+
+Decision precedence and rules:
+
+1. An explicit user format selection has priority over automatic selection.
+2. With no explicit choice, a document containing only simple text of at most the configured character limit is delivered inline. Paragraphs and line breaks must be retained in the Telegram message or email body.
+3. A longer document, a document with tables, or a document with complex structure is delivered as a generated DOCX or XLSX. The exact DOCX-versus-XLSX rule requires renderer and product acceptance criteria.
+4. An inline Telegram result must offer a “Получить DOCX” action; this is an adapter/UI concern triggered by the policy decision, not a policy dependency.
+
+No `OutputPolicy`, Telegram button, DOCX/XLSX renderer, or delivery implementation exists yet. These will be implemented only after the Document Model and renderers are accepted.
