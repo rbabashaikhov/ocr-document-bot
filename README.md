@@ -56,4 +56,15 @@ uv run python -m ocr_document_bot.render_docx \
 
 Each fixture becomes one source page in the DOCX. The renderer accepts only the internal Document Model after the mapper boundary; it does not read Yandex JSON itself.
 
+Visual recovery of ruled tables is disabled by default. Native Yandex `tables[]` always has priority. To evaluate a local image and fixture without an API call, explicitly enable the feature flag and provide the matching source image:
+
+```bash
+OCR_ENABLE_VISUAL_TABLE_DETECTION=true uv run python -m ocr_document_bot.render_docx \
+  fixtures/vision/ocr-002b-table.json \
+  --source-image tests/samples/table.png \
+  --output artifacts/ocr-004e/complex-table-visual.docx
+```
+
+Only geometrically confirmed (`detected`) grids become Word tables. Ambiguous or absent grids preserve the existing OCR block flow.
+
 See [architecture](docs/ARCHITECTURE.md) and the [OCR-001 report](docs/OCR-001-REPORT.md).
