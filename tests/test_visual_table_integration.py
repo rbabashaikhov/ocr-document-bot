@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -136,3 +137,16 @@ def test_local_complex_fixture_renders_before_after_without_duplicate_text(tmp_p
     assert not any(isinstance(element, Paragraph) and element.text in source_text for element in after.pages[0].elements)
     reopened = WordDocument(DocxRenderer().save(after, tmp_path / "complex.docx"))
     assert len(reopened.tables) == 1
+    seen_cells: set[str] = set()
+    rendered_lines: list[str] = []
+    for row in reopened.tables[0].rows:
+        for cell in row.cells:
+            # python-docx repeats a merged Word cell for every covered grid
+            # position; its XML path identifies the one physical cell.
+            path = cell._tc.getroottree().getpath(cell._tc)
+            if path not in seen_cells:
+                seen_cells.add(path)
+                rendered_lines.extend(cell.text.splitlines())
+    source_lines = [part for block in root.get("textAnnotation", {}).get("blocks", []) for line in block.get("lines", []) for part in str(line.get("text", "")).splitlines()]
+    assert len(seen_cells) == 29
+    assert Counter(rendered_lines) == Counter(source_lines)
