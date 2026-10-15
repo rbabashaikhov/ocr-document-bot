@@ -1,0 +1,51 @@
+# OCR Bot v2 architecture (OCR-001)
+
+## Goal and boundary
+
+One core pipeline accepts a file from an adapter, preserves the OCR provider's useful structural data in a provider-neutral `DocumentModel`, and gives that model to a selected renderer. OCR-001 supplies contracts and state handling only; it has no transport listener, email implementation, renderer implementation, persistence, queue, LLM, production connection, or deployment.
+
+```
+Telegram Adapter ─┐
+                  ├─> OCR Engine ─> Input Preprocessor ─> Yandex Vision Client
+Email Adapter ────┘          │                                      │
+                              └──── OCRJob / DocumentModel <─────────┘
+                                                    │
+                                                    └─> Document Renderer
+```
+
+## Components and ownership
+
+| Component | Responsibility | Must not own |
+| --- | --- | --- |
+| Telegram Adapter | Convert a Telegram update/file into `InputFile`; return the result through Telegram. | OCR request details or document layout decisions. |
+| Email Adapter | Extract an allowed attachment into `InputFile`; send a reply. | Mail server, OCR, and renderer internals. |
+| OCR Engine | Orchestrate state transitions, preprocessing, provider call, and rendering; map errors to job errors. | HTTP/webhook framework or provider JSON shape. |
+| Input Preprocessor | Validate MIME type/size; later normalize orientation and choose sync/async mode. | Recognized-content interpretation. |
+| Yandex Vision Client | Authentication headers, request mode, polling, and conversion of official response fields to `DocumentModel`. | Output format and transport-specific behavior. |
+| Document Model | Preserve pages, blocks, geometry, layout types, tables/cells/spans, and provider metadata. | API credentials and UI output. |
+| Document Renderer | Turn `DocumentModel` into DOCX/Markdown/etc. | Provider JSON and inbound transport. |
+
+## OCRJob lifecycle and errors
+
+`received → preprocessing → recognizing → rendering → completed`
+
+Any nonterminal state can move to `failed`. A terminal job cannot be restarted in place. `OCRJob` records an opaque UUID, timestamps, input metadata, status, optional `DocumentModel`, and safe error code/message. Do not place source bytes, credentials, or raw provider payloads into logs by default.
+
+Suggested OCR-002 error categories:
+
+- `unsupported_input`: MIME, empty file, size/page limit, or malformed document;
+- `authentication_failed` / `authorization_failed`: invalid or underprivileged cloud credential;
+- `provider_rate_limited` / `provider_unavailable`: retry with bounded backoff only where safe;
+- `recognition_failed`: returned provider operation/error;
+- `rendering_failed`: a valid model could not be expressed in the requested format;
+- `delivery_failed`: output exists but the adapter cannot return it.
+
+Vision OCR does not support idempotency, so do not retry a submission blindly. Persist a caller-side deduplication key or explicit user retry decision before enabling automatic resubmission.
+
+## Why no database, Redis, queue, or LangGraph now
+
+The OCR-001 scope has one process-local use case and no actual concurrent adapters. Introducing infrastructure now would create operational obligations without a demonstrated throughput, retry, or durability requirement. A durable job store plus queue is justified in OCR-002 only if async PDF polling, restarts, multi-user parallelism, or delivery retries require jobs to survive process restarts. LangGraph has no role in deterministic file validation, API calls, or rendering, and an LLM is expressly out of scope.
+
+## Configuration and security
+
+All future configuration comes from environment variables. `.env.example` names expected variables but contains no values. Prefer a service account with a scoped, expiring API key or an IAM-token flow, minimum service role required by current Vision documentation, secret injection on the VPS, and rotation. The exact role and current API endpoint must be rechecked during OCR-002 because Yandex's current API reference has moved to AI Studio.
