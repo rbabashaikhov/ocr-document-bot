@@ -56,3 +56,14 @@ Commit the selected source, test and public documentation changes, then push
 `feat/ocr-001` with a normal non-force push. Open a pull request to `main` and
 do not merge it automatically. No GitHub Release or version tag is part of
 this step.
+
+## Publication result
+
+The publication commit is `d83f1bf0159d61e371aa5ed8776440327d6f1d68`.
+`feat/ocr-001` was pushed with a normal non-force update and verified at:
+
+- <https://github.com/rbabashaikhov/ocr-document-bot/tree/feat/ocr-001>
+- <https://github.com/rbabashaikhov/ocr-document-bot/pull/1>
+
+The pull request is intentionally open; no merge, tag, GitHub Release or
+production deployment was performed.
