@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import logging
 from pathlib import Path
 import re
 from typing import Any, Protocol
 from uuid import uuid4
 
 from ocr_document_bot.domain import InputFile
+
+
+logger = logging.getLogger(__name__)
 
 
 class VisionClient(Protocol):
@@ -32,9 +36,13 @@ class DiagnosticVisionClient:
 
     def recognize(self, input_file: InputFile, *, language_codes: tuple[str, ...], model: str) -> dict[str, Any]:
         response = self._client.recognize(input_file, language_codes=language_codes, model=model)
-        self._directory.mkdir(parents=True, exist_ok=True)
-        output = self._directory / f"vision-diagnostic-{uuid4().hex}.json"
-        output.write_text(json.dumps(redact_response(response), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            output = self._directory / f"vision-diagnostic-{uuid4().hex}.json"
+            output.write_text(json.dumps(redact_response(response), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            # Diagnostics are opt-in operational evidence, never an OCR dependency.
+            logger.warning("Vision diagnostic persistence failed; continuing without a record")
         return response
 
     def close(self) -> None:

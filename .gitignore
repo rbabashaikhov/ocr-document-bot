@@ -18,3 +18,6 @@ artifacts/ocr-004c/
 artifacts/ocr-004d/
 artifacts/ocr-004e/
 artifacts/ocr-004f/
+# Local deployment/incident evidence may contain private infrastructure details.
+docs/OCR-008B-DEPLOY-REPORT.md
+docs/OCR-008C-REPORT.md

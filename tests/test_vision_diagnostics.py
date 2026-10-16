@@ -53,3 +53,12 @@ def test_diagnostic_client_writes_redacted_record_only(tmp_path: Path) -> None:
     assert "Confidential" not in content
     client.close()
     assert delegate.closed
+
+
+def test_diagnostic_write_failure_does_not_discard_successful_ocr_response(tmp_path: Path, caplog) -> None:
+    blocked_directory = tmp_path / "not-a-directory"
+    blocked_directory.write_text("occupied", encoding="utf-8")
+    client = DiagnosticVisionClient(MockVision(), blocked_directory)
+
+    assert client.recognize(InputFile("source.png", "image/png", b"image", "api"), language_codes=("ru",), model="page") == RESPONSE
+    assert "Vision diagnostic persistence failed" in caplog.text

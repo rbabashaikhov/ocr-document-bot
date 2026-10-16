@@ -1,169 +1,162 @@
 # OCR Bot v2
 
-This repository contains a local, structure-preserving OCR service. Optional Telegram and Email adapters receive files, the shared pipeline builds a provider-neutral Document Model, and it returns inline text or editable DOCX. It has no deployment, LLM, or production n8n integration.
+OCR Bot v2 восстанавливает редактируемые документы из изображений и PDF. Он
+использует Yandex Vision OCR, сохраняет смысловую структуру документа во
+внутренней модели и отдаёт короткий текст прямо в канал доставки либо создаёт
+редактируемый DOCX.
 
-## Layout
+Поддерживаются два независимых канала: Telegram long polling и электронная
+почта через стандартные IMAP/SMTP. Они используют один OCR pipeline и не
+содержат собственной логики распознавания.
 
-- `src/ocr_document_bot/domain` — provider-neutral job and document model.
-- `src/ocr_document_bot/preprocessing` — input validation, image normalisation, and per-page PDF/TIFF preparation.
-- `src/ocr_document_bot/ocr_engine` — use-case orchestration.
-- `src/ocr_document_bot/providers` — Yandex configuration boundary only.
-- `src/ocr_document_bot/cli.py` — guarded local research CLI; it never calls OCR without an explicit opt-in flag.
-- `src/ocr_document_bot/adapters` — Telegram and standard IMAP/SMTP Email transport boundaries.
-- `src/ocr_document_bot/renderers` — reserved output boundary.
-- `docs/OCR-001-REPORT.md` — workflow audit, verified API research, risks, and OCR-002 handoff.
-- `docs/OCR-002-REPORT.md` — structured-response research and restoration strategy.
+## Возможности
 
-## Local setup and checks
+- Приём JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF и PDF.
+- Постраничная обработка многостраничных TIFF и PDF в исходном порядке.
+- Извлечение пригодного текстового слоя PDF через PyMuPDF без повторного OCR;
+  сканированные страницы направляются в Vision.
+- Восстановление абзацев, заголовков, порядка чтения и геометрии OCR-блоков.
+- Преобразование нативных таблиц Yandex Vision в редактируемые таблицы DOCX,
+  включая пустые и объединённые ячейки.
+- Осторожное визуальное восстановление таблиц с видимой сеткой через OpenCV.
+  Оно отключено по умолчанию и не заменяет неподтверждённую структуру.
+- Генерация DOCX с абзацами, заголовками, разрывами страниц и таблицами.
+- Smart Output Delivery: простой текст до заданного лимита отправляется в
+  Telegram или в тело ответного письма; таблицы и длинные документы — DOCX.
+  В Telegram для inline-ответа доступна кнопка «Получить DOCX».
+- Telegram и Email с allowlist отправителей, защитой от повторной обработки и
+  сохранением состояния Email-доставки в SQLite.
 
-This project uses [uv](https://docs.astral.sh/uv/) for Python 3.12, dependency resolution, the local `.venv/`, and command execution. Install `uv`, then synchronize the locked development environment:
+OCR не гарантирует стопроцентную точность. Особенно внимательно проверяйте
+небольшие числовые значения, сложные таблицы, объединения ячеек и исходное
+оформление документа.
 
-```bash
-uv sync
-uv run pytest
+## Архитектура
+
+```text
+Telegram Adapter ─┐
+                  ├─> DocumentOCRService ─> InputPreprocessor
+Email Adapter ────┘             │                    │
+                                │                    ├─> native PDF text
+                                │                    └─> Yandex Vision Client
+                                │                              │
+                                └─> Document Model <───────────┘
+                                          │
+                         OutputPolicy ───┴───> inline text / DOCX Renderer
 ```
 
-`uv sync` creates or updates `.venv/` from `pyproject.toml` and the committed `uv.lock`; do not manually install project dependencies with `pip`. To upgrade a dependency deliberately, update `pyproject.toml`, run `uv lock`, review the lock-file change, then run `uv sync`.
+`DocumentOCRService`, Document Model, OutputPolicy и DOCX Renderer не зависят
+от Telegram или IMAP/SMTP. Детали Yandex JSON ограничены provider mapper;
+рендерер получает только независимую Document Model. Подробнее — в
+[архитектуре](docs/ARCHITECTURE.md).
 
-Copy `.env.example` to `.env` only when a later implementation needs credentials. Never commit `.env`, tokens, API keys, OAuth credentials, or service-account keys.
+## Технологии
 
-`OCR_INLINE_TEXT_MAX_CHARS=2500` controls Smart Output Delivery: simple short documents are returned inline; tables and longer documents are sent as DOCX.
+- Python 3.12 и [uv](https://docs.astral.sh/uv/);
+- httpx и Yandex Vision OCR;
+- Pydantic v2, Pillow, PyMuPDF и OpenCV;
+- python-docx;
+- aiogram 3;
+- стандартные `imaplib`, `smtplib` и SQLite;
+- Docker Compose.
 
-## Supported input formats
+## Локальный запуск
 
-Telegram accepts JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF, and PDF. JPG and PNG preserve the existing path. WEBP, BMP, and each TIFF frame are decoded locally and normalised to JPEG before OCR.
-
-PDF is processed page by page in source order. A page whose extracted text layer reaches `OCR_PDF_TEXT_MIN_CHARS` meaningful characters is added directly to the Document Model; a scanned page is rendered to a bounded JPEG (`OCR_PDF_RENDER_DPI`, `OCR_MAX_RENDERED_PIXELS`) and then sent to Vision. Thus mixed text/scan PDFs do not OCR their usable text pages. Encrypted, damaged, over-page-limit, and oversized inputs produce a user-facing Telegram error.
-
-`OCR_MAX_FILE_SIZE_BYTES` limits the uploaded source, `OCR_MAX_PAGES` limits TIFF/PDF page count, and `OCR_MAX_JOB_SIZE_BYTES` limits the sum of generated OCR images. Defaults are in `.env.example` and can be adjusted locally without changing source code.
-
-The current implementation uses synchronous per-page Vision requests. This is deliberately suitable only for bounded interactive jobs. For large documents, OCR-006A recommends a separate asynchronous provider workflow with persistent job state and polling; it is not implemented here because that would require queue/state infrastructure outside this stage.
-
-For ruled tables recovered visually, optional targeted cell recovery is disabled by default. `OCR_ENABLE_CELL_RECOVERY=true` permits a bounded second Vision request only for an empty cell whose cropped interior contains visible ink; `OCR_MAX_CELL_RECOVERY_REQUESTS` caps those requests per source page. This can incur provider charges, so enable it only for an explicitly approved diagnostic or production policy. A failed or empty recovery leaves the first-pass cell unchanged.
-
-## OCR research CLI
-
-The minimal `httpx` client calls the documented synchronous Vision endpoint only when explicitly authorized. It loads `.env` without overwriting shell environment values and saves the complete provider JSON under `fixtures/vision/`, which is deliberately ignored because it may contain document data.
-
-```bash
-# This validates CLI arguments and intentionally stops before any request.
-uv run python -m ocr_document_bot.cli path/to/image.png
-
-# Run only after a separate explicit approval for the billed OCR request.
-uv run python -m ocr_document_bot.cli path/to/image.png --allow-billed-request
-```
-
-This research CLI calls Vision directly and therefore remains limited to `image/jpeg`, `image/png`, and single-page PDF. The Telegram/service pipeline above is the page-aware path for all supported formats. Use no production or sensitive input for research captures.
-
-## Local DOCX rendering
-
-Render one or more already captured local fixtures without calling Yandex Vision:
-
-```bash
-uv run python -m ocr_document_bot.render_docx \
-  fixtures/vision/ocr-002b-mixed.json \
-  --model markdown \
-  --output /tmp/ocr-002b-mixed.docx
-```
-
-Each fixture becomes one source page in the DOCX. The renderer accepts only the internal Document Model after the mapper boundary; it does not read Yandex JSON itself.
-
-Visual recovery of ruled tables is disabled by default. Native Yandex `tables[]` always has priority. To evaluate a local image and fixture without an API call, explicitly enable the feature flag and provide the matching source image:
-
-```bash
-OCR_ENABLE_VISUAL_TABLE_DETECTION=true uv run python -m ocr_document_bot.render_docx \
-  fixtures/vision/ocr-002b-table.json \
-  --source-image tests/samples/table.png \
-  --output artifacts/ocr-004e/complex-table-visual.docx
-```
-
-Only geometrically confirmed (`detected`) grids become Word tables. Ambiguous or absent grids preserve the existing OCR block flow.
-
-## Local Telegram bot
-
-The optional aiogram 3 adapter accepts JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF, and PDF as a photo or document. It sends simple results of at most `OCR_INLINE_TEXT_MAX_CHARS` directly to the chat, and sends DOCX for tables or longer content. Inline results include a “Получить DOCX” button. OCR is called only after a user sends a file; starting the bot itself does not invoke Yandex Vision.
-
-Set `TELEGRAM_BOT_TOKEN` in the untracked `.env`. Before long polling, the adapter calls Telegram `getWebhookInfo` and refuses to start if a webhook is configured. It does not call `deleteWebhook`, so it does not alter a running n8n integration.
+Установите `uv`, затем создайте окружение по зафиксированному `uv.lock`:
 
 ```bash
 uv sync --locked
+uv run pytest -q
+```
+
+Создайте локальный `.env` из шаблона. `.env` не коммитится:
+
+```bash
+cp .env.example .env
+```
+
+Заполните ровно один метод авторизации Vision (`YANDEX_VISION_API_KEY` или
+`YANDEX_VISION_IAM_TOKEN`) и `YANDEX_CLOUD_FOLDER_ID`. Для Telegram нужен
+`TELEGRAM_BOT_TOKEN`. Для Email заполните блок `OCR_EMAIL_*`, включая
+`OCR_EMAIL_ALLOWED_SENDERS` с полными адресами через запятую.
+
+Запуск адаптеров выполняйте раздельно. Сам запуск не отправляет OCR-запрос:
+
+```bash
 uv run python -m ocr_document_bot.telegram_bot
-```
-
-Use a dedicated development bot token for manual testing. Stop the local process with `Ctrl+C`; the optional DOCX button cache is in memory and is cleared when the process stops.
-
-## Local Email adapter
-
-The optional Email adapter uses standard IMAP polling and SMTP; it has no Gmail API dependency. Copy the Email section of `.env.example` into the untracked `.env`, point it at a dedicated test mailbox, and set `OCR_EMAIL_ALLOWED_SENDERS` to a comma-separated list of complete mailbox addresses permitted to invoke OCR. The allowlist is mandatory and compares normalized full addresses only—never a domain or substring. A visible `From` header is not cryptographic proof of identity, so the mailbox host should also enforce SPF/DKIM/DMARC or equivalent controls where available.
-
-The adapter returns only to the normalized `From` address, not `Reply-To`. It rejects automatic/list mail and its own replies, accepts only JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF and PDF names, and applies configured attachment count/size limits before calling the shared service. Content is still decoded and validated by `InputPreprocessor`; MIME headers alone are not trusted.
-
-```bash
-# Do not run this against a production mailbox during OCR-007A.
-uv sync --locked
 uv run python -m ocr_document_bot.email_bot
 ```
 
-For a manual test after approval, send an attachment from an explicitly allowed test address. Simple short text is placed in the reply body; a table or long document is returned as `*-ocr-N.docx`. Multiple attachments are numbered in the body. Do not use sensitive documents.
+Не запускайте второй polling-процесс с тем же Telegram token или тем же
+почтовым ящиком и SQLite state. Перед Telegram polling приложение проверяет
+webhook и отказывается запускаться, не удаляя существующий webhook.
 
-Processed message identifiers and conservative delivery states are stored in `OCR_EMAIL_STATE_PATH` (default: ignored `local-state/email-adapter.sqlite3`). A response is marked complete only after SMTP returns success. If SMTP times out or disconnects after send may have started, the state becomes `uncertain` and the adapter deliberately does not auto-resend: this avoids duplicate emails but requires operator reconciliation.
+## Конфигурация и лимиты
+
+Все имена переменных и безопасные значения по умолчанию находятся в
+[.env.example](.env.example). Важные параметры:
+
+- `OCR_MAX_FILE_SIZE_BYTES`, `OCR_MAX_PAGES`, `OCR_MAX_JOB_SIZE_BYTES` —
+  ограничения входного задания;
+- `OCR_PDF_RENDER_DPI`, `OCR_MAX_RENDERED_PIXELS`,
+  `OCR_PDF_TEXT_MIN_CHARS` — обработка PDF;
+- `OCR_INLINE_TEXT_MAX_CHARS` — лимит inline-текста, по умолчанию 2500;
+- `OCR_ENABLE_VISUAL_TABLE_DETECTION` — опциональное восстановление сетки
+  таблиц, по умолчанию выключено;
+- `OCR_ENABLE_CELL_RECOVERY` — ограниченное дополнительное OCR пустых ячеек,
+  по умолчанию выключено и потенциально тарифицируется;
+- `OCR_DIAGNOSTICS_DIR` — только для локальной обезличенной диагностики; в
+  контейнере оставляйте пустым, если не подготовлен отдельный writable volume.
+
+Email allowlist сравнивает нормализованные полные адреса, а не домены или
+подстроки. Заголовок `From` сам по себе не является криптографическим
+доказательством личности: настройте SPF/DKIM/DMARC на стороне почтового
+хостинга.
 
 ## Docker Compose
 
-`Dockerfile` builds one Python 3.12 production image with `uv sync --locked --no-dev`. It contains no `.env` or other secrets: Docker Compose supplies the untracked `.env` only at container runtime. The services have no published ports; they are polling clients.
+Один образ обслуживает оба сервиса; порты не публикуются. Email SQLite хранится
+в named volume `ocr-document-bot-email-state` и переживает пересоздание
+контейнера.
 
 ```bash
-# Inspect resolved configuration without starting anything.
-docker compose config
-
-# Build locally. This does not call Vision, IMAP, SMTP, or Telegram.
+# Проверка конфигурации и сборка без запуска polling.
+docker compose config --quiet
 docker compose build
 
-# Explicitly start either adapter, or both.
+# Явный запуск нужного сервиса.
 docker compose up -d ocr-telegram
 docker compose up -d ocr-email
-docker compose up -d
 
-# Observe and operate each independently.
+# Эксплуатация.
 docker compose ps
 docker compose logs -f ocr-telegram
 docker compose logs -f ocr-email
-docker compose restart ocr-email
 docker compose stop ocr-telegram
-docker compose down
+docker compose restart ocr-email
 ```
 
-The email service stores its SQLite ledger in the named volume `ocr-document-bot-email-state`; it survives container recreation and `docker compose down`. Back it up only while the email service is stopped:
-
-```bash
-docker compose stop ocr-email
-docker run --rm -v ocr-document-bot-email-state:/data -v "$PWD":/backup alpine \
-  tar -czf /backup/email-state-backup.tgz -C /data .
-
-# Restore only while ocr-email is stopped, after retaining a separate backup.
-docker run --rm -v ocr-document-bot-email-state:/data -v "$PWD":/backup alpine \
-  tar -xzf /backup/email-state-backup.tgz -C /data
-docker compose up -d ocr-email
-```
-
-For an update without losing email state, leave the named volume intact:
+Для обновления образа без потери Email-state оставьте named volume нетронутым:
 
 ```bash
 docker compose build
 docker compose up -d --no-deps --force-recreate ocr-telegram ocr-email
 ```
 
-On a newly created `email-state` volume Docker initializes `/data` from the image with UID `10001`, so the non-root Email process can create SQLite and its journal files. After Docker is available, verify that invariant without starting either poller:
+Healthcheck подтверждает, что процесс жив, но не может доказать доступность
+внешних Telegram, IMAP, SMTP или Vision. Для production нужен внешний canary
+и мониторинг логов. См. [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-```bash
-docker compose run --rm --no-deps ocr-email \
-  python -c "from pathlib import Path; p = Path('/data/write-check'); p.write_text('ok'); p.unlink()"
-```
+## Ограничения
 
-For an existing volume with incorrect ownership, stop `ocr-email`, retain a backup, then repair it once as an operator: `docker compose run --rm --user root --no-deps ocr-email chown -R 10001:10001 /data`.
+- Используется синхронный постраничный OCR: очень большие документы требуют
+  отдельного async-процесса с durable job state.
+- Таблицы без нативной структуры или надёжной видимой сетки могут остаться
+  обычным текстом — это безопаснее ложной таблицы.
+- Исходный дизайн не воспроизводится пиксель-в-пиксель; DOCX ориентирован на
+  редактирование.
+- XLSX, Web UI, публичный API и монетизация пока не реализованы.
 
-Compose uses `restart: unless-stopped`, so an initial VPS start still requires an explicit operator command such as `docker compose up -d ocr-email`. Do not run a second polling instance with the same Telegram token or IMAP mailbox/state volume.
-
-The Docker healthcheck proves that the adapter process (PID 1) is alive, but polling protocols do not expose a local endpoint and it cannot prove a working Telegram, IMAP, SMTP, or Vision connection. Monitor `docker compose ps`, bounded logs, and an external canary/alert for a real end-to-end availability signal. `OCR_DIAGNOSTICS_DIR` should remain unset in containers unless an explicit writable, access-controlled volume is provisioned.
-
-See [architecture](docs/ARCHITECTURE.md) and the [OCR-001 report](docs/OCR-001-REPORT.md).
+Документы по эксплуатации, безопасности и дальнейшему развитию:
+[архитектура](docs/ARCHITECTURE.md), [развёртывание](docs/DEPLOYMENT.md),
+[безопасность](docs/SECURITY.md), [roadmap](docs/ROADMAP.md).
