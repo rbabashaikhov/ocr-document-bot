@@ -1,0 +1,14 @@
+{
+  "page": "1",
+  "textAnnotation": {
+    "width": "1200",
+    "height": "1600",
+    "blocks": [
+      {"layoutType": "LAYOUT_TYPE_TITLE", "boundingBox": {"vertices": [{"x": "50", "y": "40"}, {"x": "600", "y": "40"}]}, "lines": [{"text": "Quarterly report"}]},
+      {"layoutType": "LAYOUT_TYPE_TEXT", "boundingBox": {"vertices": [{"x": "50", "y": "140"}, {"x": "1100", "y": "300"}]}, "lines": [{"text": "First paragraph."}, {"text": "Second paragraph line."}]}
+    ],
+    "tables": [{"rowCount": "2", "columnCount": "2", "cells": [{"rowIndex": "0", "columnIndex": "0", "rowSpan": "1", "columnSpan": "2", "text": "Merged heading"}, {"rowIndex": "1", "columnIndex": "0", "rowSpan": "1", "columnSpan": "1", "text": "A"}, {"rowIndex": "1", "columnIndex": "1", "rowSpan": "1", "columnSpan": "1", "text": "B"}]}],
+    "markdown": "# Quarterly report\n\n| A | B |",
+    "pictures": [{"score": "0.91"}]
+  }
+}

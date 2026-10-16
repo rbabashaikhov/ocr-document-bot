@@ -1,0 +1,50 @@
+x-ocr-service: &ocr-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: ocr-document-bot:local
+  env_file:
+    - .env
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 128
+  mem_limit: 1g
+  cpus: 1.0
+  stop_grace_period: 30s
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+  # This detects a stopped PID 1. Polling protocols have no in-process health
+  # endpoint, so it cannot prove a live external connection; see README.
+  healthcheck:
+    test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+
+services:
+  ocr-telegram:
+    <<: *ocr-service
+    command: ["python", "-m", "ocr_document_bot.telegram_bot"]
+
+  ocr-email:
+    <<: *ocr-service
+    command: ["python", "-m", "ocr_document_bot.email_bot"]
+    environment:
+      OCR_EMAIL_STATE_PATH: /data/email-adapter.sqlite3
+    volumes:
+      - email-state:/data
+
+volumes:
+  email-state:
+    name: ocr-document-bot-email-state

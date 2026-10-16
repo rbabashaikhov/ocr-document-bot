@@ -2,3 +2,22 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+13.2_recognize file tg.json
+fixtures/vision/*.json
+local-testdata/
+local-diagnostics/
+local-state/
+tests/samples/
+artifacts/ocr-004b/
+artifacts/ocr-004c/
+artifacts/ocr-004d/
+artifacts/ocr-004e/
+artifacts/ocr-004f/
+# Local deployment/incident evidence may contain private infrastructure details.
+docs/OCR-008B-DEPLOY-REPORT.md
+docs/OCR-008C-REPORT.md

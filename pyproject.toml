@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocr-document-bot"
+version = "0.1.0"
+description = "OCR Bot v2 foundation: structure-preserving document recovery"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Proprietary"}
+authors = [{name = "OCR Bot team"}]
+dependencies = ["aiogram>=3.22,<4", "httpx>=0.28,<0.29", "pydantic>=2.7,<3", "Pillow>=10,<12", "PyMuPDF>=1.24,<2", "python-docx>=1.1,<2", "opencv-python-headless>=4.10,<5"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+where = ["src"]
