@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Protocol
 
-from ocr_document_bot.document_model import Document, OCRProvenance, Page, Paragraph
+from ocr_document_bot.document_model import BoundingBox, Document, OCRProvenance, Page, Paragraph, Point, ReadingOrderResolver, Table, TableCell, TableRow
 from ocr_document_bot.domain import InputFile
 from ocr_document_bot.preprocessing import InputPreprocessor, PreparedPage
 from ocr_document_bot.providers.yandex_document_mapper import document_from_yandex_responses
@@ -50,21 +50,71 @@ class DocumentOCRService:
 
     def _native_page(self, prepared: PreparedPage) -> Page:
         assert prepared.native_text is not None
-        paragraphs = [item for item in prepared.native_text.split("\n\n") if item.strip()] or [prepared.native_text]
         elements = [
             Paragraph(
-                id=f"page-{prepared.page_number}-pdf-text-{index}",
-                text=text,
+                id=f"page-{prepared.page_number}-pdf-text-{block.source_order}",
+                text=block.text,
+                geometry=_bbox(block.bbox),
                 provenance=OCRProvenance(
                     provider="pdf-native-text",
                     source_page_number=prepared.page_number,
-                    source_order=index,
+                    source_order=block.source_order,
                     source_type="pdf_text",
                 ),
             )
-            for index, text in enumerate(paragraphs)
+            for block in prepared.native_blocks
         ]
-        return Page(number=prepared.page_number, elements=elements)
+        if not prepared.native_blocks and not prepared.native_tables:
+            paragraphs = [item for item in prepared.native_text.split("\n\n") if item.strip()] or [prepared.native_text]
+            elements = [
+                Paragraph(
+                    id=f"page-{prepared.page_number}-pdf-text-{index}",
+                    text=text,
+                    provenance=OCRProvenance(
+                        provider="pdf-native-text",
+                        source_page_number=prepared.page_number,
+                        source_order=index,
+                        source_type="pdf_text",
+                    ),
+                )
+                for index, text in enumerate(paragraphs)
+            ]
+        for index, native_table in enumerate(prepared.native_tables):
+            order = len(prepared.native_blocks) + index
+            rows = [
+                TableRow(
+                    index=row_index,
+                    cells=[
+                        TableCell(
+                            text=value,
+                            row_index=row_index,
+                            column_index=column_index,
+                            provenance=OCRProvenance(
+                                provider="pdf-native-text",
+                                source_page_number=prepared.page_number,
+                                source_order=order,
+                                source_type="pdf_table_cell",
+                            ),
+                        )
+                        for column_index, value in enumerate(row)
+                    ],
+                )
+                for row_index, row in enumerate(native_table.rows)
+            ]
+            elements.append(Table(
+                id=f"page-{prepared.page_number}-pdf-table-{index}",
+                geometry=_bbox(native_table.bbox),
+                provenance=OCRProvenance(
+                    provider="pdf-native-text",
+                    source_page_number=prepared.page_number,
+                    source_order=order,
+                    source_type="pdf_table",
+                ),
+                row_count=len(rows),
+                column_count=max((len(row.cells) for row in rows), default=0),
+                rows=rows,
+            ))
+        return Page(number=prepared.page_number, elements=ReadingOrderResolver().resolve(elements))
 
 
 def _temporary_image(input_file: InputFile) -> Path:
@@ -72,3 +122,7 @@ def _temporary_image(input_file: InputFile) -> Path:
     with tempfile.NamedTemporaryFile(prefix="ocr-page-", suffix=suffix, delete=False) as handle:
         handle.write(input_file.content)
         return Path(handle.name)
+
+
+def _bbox(value: tuple[float, float, float, float]) -> BoundingBox:
+    return BoundingBox(vertices=(Point(x=value[0], y=value[1]), Point(x=value[2], y=value[3])))

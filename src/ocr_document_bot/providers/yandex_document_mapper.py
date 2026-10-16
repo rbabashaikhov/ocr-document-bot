@@ -46,10 +46,11 @@ def _page_from_response(raw: Mapping[str, Any], *, model: str | None, image_path
         rows: defaultdict[int, list[TableCell]] = defaultdict(list)
         for cell_index, cell in enumerate(_mappings(table.get("cells"))):
             row_index = _int(cell.get("rowIndex"), 0)
+            cell_geometry = _bbox(cell.get("boundingBox"))
             rows[row_index].append(TableCell(
-                text=str(cell.get("text", "")), row_index=row_index, column_index=_int(cell.get("columnIndex"), 0),
+                text=_cell_text(cell.get("text"), cell_geometry, source_blocks), row_index=row_index, column_index=_int(cell.get("columnIndex"), 0),
                 row_span=_int(cell.get("rowSpan"), 1), column_span=_int(cell.get("columnSpan"), 1),
-                geometry=_bbox(cell.get("boundingBox")), provenance=_origin(page_number, cell_index, "table_cell", model),
+                geometry=cell_geometry, provenance=_origin(page_number, cell_index, "table_cell", model),
             ))
         row_count = _int(table.get("rowCount"), 0)
         elements.append(Table(
@@ -153,6 +154,34 @@ def _inside(block: BoundingBox | None, container: BoundingBox | None) -> bool:
     center_x = (block.left + block.right) / 2
     center_y = (block.top + block.bottom) / 2
     return container.left <= center_x <= container.right and container.top <= center_y <= container.bottom
+
+
+def _cell_text(value: object, geometry: BoundingBox | None, blocks: Mapping[int, Paragraph | Heading]) -> str:
+    """Fill only empty native cells from OCR blocks placed inside that cell."""
+    text = str(value or "").strip()
+    if text or geometry is None:
+        return text
+    for block in blocks.values():
+        if _inside(block.geometry, geometry):
+            text = _merge_text(text, block.text)
+    return text
+
+
+def _merge_text(existing: str, candidate: str) -> str:
+    """Append non-duplicate OCR lines without inventing or normalising content."""
+    result = existing
+    normalized = _normalize_text(result)
+    for line in candidate.splitlines():
+        line = line.strip()
+        line_normalized = _normalize_text(line)
+        if line_normalized and line_normalized not in normalized:
+            result = f"{result}\n{line}" if result else line
+            normalized = _normalize_text(result)
+    return result
+
+
+def _normalize_text(value: str) -> str:
+    return "".join(value.split()).casefold()
 
 
 def _mappings(value: object) -> list[Mapping[str, Any]]:

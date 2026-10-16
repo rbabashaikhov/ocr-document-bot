@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from typing import Iterable
 
 import fitz
 from PIL import Image, ImageSequence, UnidentifiedImageError
@@ -17,10 +18,29 @@ class UnsupportedInputError(ValueError):
 
 
 @dataclass(frozen=True)
+class NativeTextBlock:
+    """A text-layer block outside a native PDF table."""
+
+    text: str
+    bbox: tuple[float, float, float, float]
+    source_order: int
+
+
+@dataclass(frozen=True)
+class NativeTable:
+    """A table extracted by PyMuPDF from a text-layer PDF page."""
+
+    rows: tuple[tuple[str, ...], ...]
+    bbox: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
 class PreparedPage:
     page_number: int
     image: InputFile | None = None
     native_text: str | None = None
+    native_blocks: tuple[NativeTextBlock, ...] = ()
+    native_tables: tuple[NativeTable, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.image is None) == (self.native_text is None):
@@ -88,7 +108,16 @@ class InputPreprocessor:
             pages: list[PreparedPage] = []
             for page_number, page in enumerate(document):
                 text = page.get_text("text").strip()
-                pages.append(PreparedPage(page_number, native_text=text) if _usable_text(text, self.pdf_text_min_chars) else PreparedPage(page_number, image=self._pdf_page_image(page, input_file, page_number)))
+                native_tables = _native_tables(page)
+                if _usable_text(text, self.pdf_text_min_chars) or native_tables:
+                    pages.append(PreparedPage(
+                        page_number,
+                        native_text=text,
+                        native_blocks=_native_blocks(page, native_tables),
+                        native_tables=native_tables,
+                    ))
+                else:
+                    pages.append(PreparedPage(page_number, image=self._pdf_page_image(page, input_file, page_number)))
             self._check_total_size(pages)
             return pages
         finally:
@@ -129,3 +158,38 @@ def _encode_jpeg(image: Image.Image) -> bytes:
 def _usable_text(text: str, minimum_chars: int) -> bool:
     compact = "".join(text.split())
     return len(compact) >= minimum_chars and sum(character.isalnum() for character in compact) >= minimum_chars
+
+
+def _native_tables(page: fitz.Page) -> tuple[NativeTable, ...]:
+    """Extract only PyMuPDF-confirmed tables; never infer one from plain text."""
+    result = page.find_tables()
+    tables = []
+    for table in result.tables:
+        extracted = table.extract()
+        column_count = max((len(row) for row in extracted), default=0)
+        rows = tuple(
+            tuple("" if column >= len(row) or row[column] is None else str(row[column]) for column in range(column_count))
+            for row in extracted
+        )
+        if rows and column_count:
+            tables.append(NativeTable(rows=rows, bbox=tuple(float(value) for value in table.bbox)))
+    return tuple(tables)
+
+
+def _native_blocks(page: fitz.Page, tables: Iterable[NativeTable]) -> tuple[NativeTextBlock, ...]:
+    table_boxes = tuple(table.bbox for table in tables)
+    blocks = []
+    for order, block in enumerate(page.get_text("blocks")):
+        x0, y0, x1, y1, text, _, block_type = block
+        if block_type != 0 or not text.strip():
+            continue
+        bbox = (float(x0), float(y0), float(x1), float(y1))
+        if any(_center_inside(bbox, table_box) for table_box in table_boxes):
+            continue
+        blocks.append(NativeTextBlock(text=text.strip(), bbox=bbox, source_order=order))
+    return tuple(blocks)
+
+
+def _center_inside(inner: tuple[float, float, float, float], outer: tuple[float, float, float, float]) -> bool:
+    center_x, center_y = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2
+    return outer[0] <= center_x <= outer[2] and outer[1] <= center_y <= outer[3]

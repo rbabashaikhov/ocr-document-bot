@@ -1,3 +1,3 @@
-from .service import InputPreprocessor, PreparedPage, UnsupportedInputError
+from .service import InputPreprocessor, NativeTable, NativeTextBlock, PreparedPage, UnsupportedInputError
 
-__all__ = ["InputPreprocessor", "PreparedPage", "UnsupportedInputError"]
+__all__ = ["InputPreprocessor", "NativeTable", "NativeTextBlock", "PreparedPage", "UnsupportedInputError"]

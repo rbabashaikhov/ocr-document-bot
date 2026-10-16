@@ -23,7 +23,7 @@ from ocr_document_bot.document_model import Document
 from ocr_document_bot.ocr_engine import DocumentOCRService
 from ocr_document_bot.output_policy import OutputDecision, OutputFormat, OutputPolicy
 from ocr_document_bot.preprocessing import InputPreprocessor, UnsupportedInputError
-from ocr_document_bot.providers import YandexVisionClient, YandexVisionConfig
+from ocr_document_bot.providers import DiagnosticVisionClient, YandexVisionClient, YandexVisionConfig
 from ocr_document_bot.renderers import DocxRenderer
 from ocr_document_bot.domain import InputFile
 from ocr_document_bot.providers.yandex_vision import load_env_file
@@ -147,6 +147,9 @@ async def run_polling() -> None:
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN is not configured")
     vision = YandexVisionClient(YandexVisionConfig.from_env())
+    diagnostics_dir = os.getenv("OCR_DIAGNOSTICS_DIR")
+    if diagnostics_dir:
+        vision = DiagnosticVisionClient(vision, Path(diagnostics_dir))
     bot = Bot(token=token)
     try:
         await assert_polling_safe(bot)

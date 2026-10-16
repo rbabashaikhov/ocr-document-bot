@@ -10,6 +10,7 @@ dist/
 13.2_recognize file tg.json
 fixtures/vision/*.json
 local-testdata/
+local-diagnostics/
 tests/samples/
 artifacts/ocr-004b/
 artifacts/ocr-004c/
