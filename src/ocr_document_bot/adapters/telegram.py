@@ -13,8 +13,6 @@ from io import BytesIO
 import mimetypes
 import os
 from pathlib import Path
-import tempfile
-from typing import Any, Protocol
 from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -22,24 +20,21 @@ from aiogram.filters import CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, Document as TelegramDocument, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from ocr_document_bot.document_model import Document
+from ocr_document_bot.ocr_engine import DocumentOCRService
 from ocr_document_bot.output_policy import OutputDecision, OutputFormat, OutputPolicy
-from ocr_document_bot.preprocessing import InputPreprocessor
+from ocr_document_bot.preprocessing import InputPreprocessor, UnsupportedInputError
 from ocr_document_bot.providers import YandexVisionClient, YandexVisionConfig
-from ocr_document_bot.providers.yandex_document_mapper import document_from_yandex_responses
 from ocr_document_bot.renderers import DocxRenderer
 from ocr_document_bot.domain import InputFile
 from ocr_document_bot.providers.yandex_vision import load_env_file
 
 
-SUPPORTED_IMAGES = frozenset({"image/jpeg", "image/png"})
+SUPPORTED_FILES = frozenset({"image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "application/pdf"})
+EXTENSION_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".bmp": "image/bmp", ".tif": "image/tiff", ".tiff": "image/tiff", ".pdf": "application/pdf"}
 
 
 class PollingSafetyError(RuntimeError):
     """Polling would conflict with an existing webhook consumer."""
-
-
-class VisionRawClient(Protocol):
-    def recognize(self, input_file: InputFile, *, language_codes: tuple[str, ...], model: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -51,20 +46,12 @@ class ProcessedOCR:
 class TelegramOCRService:
     """Synchronous OCR orchestration invoked in a worker thread by aiogram."""
 
-    def __init__(self, vision: VisionRawClient, *, preprocessor: InputPreprocessor | None = None, policy: OutputPolicy | None = None) -> None:
-        self._vision = vision
-        self._preprocessor = preprocessor or InputPreprocessor(_max_file_size())
+    def __init__(self, vision, *, preprocessor: InputPreprocessor | None = None, policy: OutputPolicy | None = None) -> None:
+        self._ocr = DocumentOCRService(vision, preprocessor=preprocessor or _preprocessor_from_env(), language_codes=_languages())
         self._policy = policy or OutputPolicy()
 
     def process(self, input_file: InputFile) -> ProcessedOCR:
-        prepared = self._preprocessor.prepare(input_file)
-        raw = self._vision.recognize(prepared, language_codes=_languages(), model="page")
-        source_image = _temporary_source_image(prepared)
-        try:
-            document = document_from_yandex_responses([raw], model="page", source_images=[source_image] if source_image else None)
-        finally:
-            if source_image:
-                source_image.unlink(missing_ok=True)
+        document = self._ocr.process(input_file)
         return ProcessedOCR(document=document, decision=self._policy.decide(document))
 
     @staticmethod
@@ -110,7 +97,7 @@ class TelegramAdapter:
         self.router.callback_query.register(self._send_requested_docx, F.data.startswith("docx:"))
 
     async def _start(self, message: Message) -> None:
-        await message.answer("Отправьте изображение JPG или PNG. Распознавание начнётся после отправки файла.")
+        await message.answer("Отправьте JPG, PNG, WEBP, BMP, TIFF или PDF. Распознавание начнётся после отправки файла.")
 
     async def _handle_input(self, message: Message, bot: Bot) -> None:
         try:
@@ -118,14 +105,16 @@ class TelegramAdapter:
         except ValueError as error:
             await message.answer(str(error))
             return
-        await message.answer("Распознаю изображение…")
+        await message.answer("Обрабатываю файл…")
         try:
             processed = await asyncio.to_thread(self._service.process, input_file)
             await self._deliver(message, processed)
+        except UnsupportedInputError as error:
+            await message.answer(_friendly_input_error(str(error)))
         except Exception:
             # Provider and file errors stay server-side; never expose tokens or
             # implementation details to a chat.
-            await message.answer("Не удалось распознать файл. Проверьте формат изображения и попробуйте ещё раз.")
+            await message.answer("Не удалось распознать файл. Проверьте формат и попробуйте ещё раз.")
 
     async def _deliver(self, message: Message, processed: ProcessedOCR) -> None:
         if processed.decision.format is OutputFormat.INLINE_TEXT:
@@ -184,22 +173,15 @@ async def _download_input(message: Message, bot: Bot) -> InputFile:
         return InputFile(filename=f"telegram-{photo.file_unique_id}.jpg", mime_type="image/jpeg", content=stream.read(), source="telegram")
     document: TelegramDocument | None = message.document
     if document is None:
-        raise ValueError("Отправьте JPG или PNG изображение.")
-    mime_type = document.mime_type or mimetypes.guess_type(document.file_name or "")[0]
-    if mime_type not in SUPPORTED_IMAGES:
-        raise ValueError("Поддерживаются только изображения JPG и PNG.")
+        raise ValueError("Отправьте JPG, PNG, WEBP, BMP, TIFF или PDF.")
+    mime_type = document.mime_type
+    if mime_type not in SUPPORTED_FILES:
+        mime_type = EXTENSION_MIME_TYPES.get(Path(document.file_name or "").suffix.lower()) or mimetypes.guess_type(document.file_name or "")[0]
+    if mime_type not in SUPPORTED_FILES:
+        raise ValueError("Поддерживаются JPG, PNG, WEBP, BMP, TIFF и PDF.")
     file = await bot.get_file(document.file_id)
     stream = await bot.download_file(file.file_path or "")
     return InputFile(filename=document.file_name or f"telegram-{document.file_unique_id}", mime_type=mime_type, content=stream.read(), source="telegram")
-
-
-def _temporary_source_image(input_file: InputFile) -> Path | None:
-    if input_file.mime_type not in SUPPORTED_IMAGES:
-        return None
-    suffix = ".jpg" if input_file.mime_type == "image/jpeg" else ".png"
-    with tempfile.NamedTemporaryFile(prefix="ocr-telegram-", suffix=suffix, delete=False) as handle:
-        handle.write(input_file.content)
-        return Path(handle.name)
 
 
 def _languages() -> tuple[str, ...]:
@@ -207,8 +189,32 @@ def _languages() -> tuple[str, ...]:
     return tuple(value.strip() for value in configured.split(",") if value.strip())
 
 
-def _max_file_size() -> int:
+def _preprocessor_from_env() -> InputPreprocessor:
+    return InputPreprocessor(
+        _positive_env("OCR_MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
+        max_pages=_positive_env("OCR_MAX_PAGES", 20),
+        max_job_size_bytes=_positive_env("OCR_MAX_JOB_SIZE_BYTES", 25 * 1024 * 1024),
+        pdf_render_dpi=_positive_env("OCR_PDF_RENDER_DPI", 150),
+        max_rendered_pixels=_positive_env("OCR_MAX_RENDERED_PIXELS", 16_000_000),
+        pdf_text_min_chars=_positive_env("OCR_PDF_TEXT_MIN_CHARS", 20),
+    )
+
+
+def _positive_env(name: str, default: int) -> int:
     try:
-        return int(os.getenv("OCR_MAX_FILE_SIZE_BYTES", str(10 * 1024 * 1024)))
+        value = int(os.getenv(name, str(default)))
     except ValueError as error:
-        raise ValueError("OCR_MAX_FILE_SIZE_BYTES must be an integer") from error
+        raise ValueError(f"{name} must be an integer") from error
+    if value < 1:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _friendly_input_error(message: str) -> str:
+    if "encrypted" in message:
+        return "PDF защищён паролем и не может быть обработан."
+    if "exceeds" in message:
+        return "Файл или документ превышает допустимый лимит."
+    if "damaged" in message or "cannot" in message:
+        return "Файл повреждён или не может быть прочитан."
+    return "Формат файла не поддерживается или не может быть обработан."

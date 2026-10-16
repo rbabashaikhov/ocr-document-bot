@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from io import BytesIO
 from types import SimpleNamespace
 
-from ocr_document_bot.adapters.telegram import DocumentStore, PollingSafetyError, ProcessedOCR, TelegramAdapter, TelegramOCRService, assert_polling_safe
+from PIL import Image
+from ocr_document_bot.adapters.telegram import DocumentStore, PollingSafetyError, ProcessedOCR, TelegramAdapter, TelegramOCRService, _download_input, _friendly_input_error, assert_polling_safe
 from ocr_document_bot.domain import InputFile
 from ocr_document_bot.document_model import Document, OCRProvenance, Page, Paragraph
 from ocr_document_bot.output_policy import OutputFormat, OutputPolicy
@@ -50,10 +52,16 @@ def _document(text: str = "Короткий текст") -> Document:
     return Document(source_provider="test", pages=[Page(number=0, elements=[Paragraph(id="p", text=text, provenance=provenance)])])
 
 
+def _image_bytes(image_format: str = "JPEG") -> bytes:
+    content = BytesIO()
+    Image.new("RGB", (20, 20), "white").save(content, format=image_format)
+    return content.getvalue()
+
+
 def test_mock_ocr_maps_short_image_to_inline_result(monkeypatch) -> None:
     monkeypatch.setenv("OCR_ENABLE_VISUAL_TABLE_DETECTION", "false")
     vision = MockVision(_raw_response())
-    processed = TelegramOCRService(vision, policy=OutputPolicy(2500)).process(InputFile("input.jpg", "image/jpeg", b"image", "telegram"))
+    processed = TelegramOCRService(vision, policy=OutputPolicy(2500)).process(InputFile("input.jpg", "image/jpeg", _image_bytes(), "telegram"))
 
     assert vision.received is not None
     assert processed.decision.format is OutputFormat.INLINE_TEXT
@@ -61,7 +69,7 @@ def test_mock_ocr_maps_short_image_to_inline_result(monkeypatch) -> None:
 
 
 def test_mock_ocr_table_requires_docx() -> None:
-    processed = TelegramOCRService(MockVision(_raw_response(table=True)), policy=OutputPolicy(2500)).process(InputFile("input.png", "image/png", b"image", "telegram"))
+    processed = TelegramOCRService(MockVision(_raw_response(table=True)), policy=OutputPolicy(2500)).process(InputFile("input.png", "image/png", _image_bytes("PNG"), "telegram"))
 
     assert processed.decision.format is OutputFormat.DOCX
     assert TelegramOCRService.render_docx(processed.document).startswith(b"PK")
@@ -104,3 +112,28 @@ def test_polling_safety_refuses_existing_webhook_without_mutation() -> None:
         pass
     else:
         raise AssertionError("Webhook must block polling")
+
+
+def test_document_extension_is_used_when_telegram_reports_generic_mime_type() -> None:
+    class DownloadBot:
+        async def get_file(self, file_id: str):
+            return SimpleNamespace(file_path="files/source")
+
+        async def download_file(self, file_path: str):
+            return BytesIO(_image_bytes("WEBP"))
+
+    message = SimpleNamespace(
+        photo=None,
+        document=SimpleNamespace(file_name="scan.webp", mime_type="application/octet-stream", file_id="id", file_unique_id="unique"),
+    )
+
+    downloaded = asyncio.run(_download_input(message, DownloadBot()))
+
+    assert downloaded.filename == "scan.webp"
+    assert downloaded.mime_type == "image/webp"
+
+
+def test_input_errors_are_safe_for_telegram_users() -> None:
+    assert "паролем" in _friendly_input_error("PDF is encrypted and cannot be processed")
+    assert "лимит" in _friendly_input_error("Prepared document exceeds configured job size limit")
+    assert "повреждён" in _friendly_input_error("PDF is damaged or cannot be opened")

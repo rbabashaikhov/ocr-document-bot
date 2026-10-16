@@ -1,11 +1,11 @@
-# OCR Bot v2 — OCR-001 foundation
+# OCR Bot v2
 
-This repository is the analysis and infrastructure baseline for a structure-preserving OCR service. It does **not** start a Telegram bot, receive email, call Yandex Vision, use an LLM, or deploy anything.
+This repository contains a local, structure-preserving OCR service. The optional Telegram adapter receives files, the shared pipeline builds a provider-neutral Document Model, and it returns inline text or editable DOCX. It has no Email adapter, deployment, LLM, or production n8n integration.
 
 ## Layout
 
 - `src/ocr_document_bot/domain` — provider-neutral job and document model.
-- `src/ocr_document_bot/preprocessing` — input validation boundary.
+- `src/ocr_document_bot/preprocessing` — input validation, image normalisation, and per-page PDF/TIFF preparation.
 - `src/ocr_document_bot/ocr_engine` — use-case orchestration.
 - `src/ocr_document_bot/providers` — Yandex configuration boundary only.
 - `src/ocr_document_bot/cli.py` — guarded local research CLI; it never calls OCR without an explicit opt-in flag.
@@ -27,7 +27,17 @@ uv run pytest
 
 Copy `.env.example` to `.env` only when a later implementation needs credentials. Never commit `.env`, tokens, API keys, OAuth credentials, or service-account keys.
 
-`OCR_INLINE_TEXT_MAX_CHARS=2500` records the planned Smart Output Delivery threshold. It is not consumed by code yet; see the deferred requirement in [architecture](docs/ARCHITECTURE.md).
+`OCR_INLINE_TEXT_MAX_CHARS=2500` controls Smart Output Delivery: simple short documents are returned inline; tables and longer documents are sent as DOCX.
+
+## Supported input formats
+
+Telegram accepts JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF, and PDF. JPG and PNG preserve the existing path. WEBP, BMP, and each TIFF frame are decoded locally and normalised to JPEG before OCR.
+
+PDF is processed page by page in source order. A page whose extracted text layer reaches `OCR_PDF_TEXT_MIN_CHARS` meaningful characters is added directly to the Document Model; a scanned page is rendered to a bounded JPEG (`OCR_PDF_RENDER_DPI`, `OCR_MAX_RENDERED_PIXELS`) and then sent to Vision. Thus mixed text/scan PDFs do not OCR their usable text pages. Encrypted, damaged, over-page-limit, and oversized inputs produce a user-facing Telegram error.
+
+`OCR_MAX_FILE_SIZE_BYTES` limits the uploaded source, `OCR_MAX_PAGES` limits TIFF/PDF page count, and `OCR_MAX_JOB_SIZE_BYTES` limits the sum of generated OCR images. Defaults are in `.env.example` and can be adjusted locally without changing source code.
+
+The current implementation uses synchronous per-page Vision requests. This is deliberately suitable only for bounded interactive jobs. For large documents, OCR-006A recommends a separate asynchronous provider workflow with persistent job state and polling; it is not implemented here because that would require queue/state infrastructure outside this stage.
 
 ## OCR research CLI
 
@@ -41,7 +51,7 @@ uv run python -m ocr_document_bot.cli path/to/image.png
 uv run python -m ocr_document_bot.cli path/to/image.png --allow-billed-request
 ```
 
-Supported input types for this CLI are `image/jpeg`, `image/png`, and `application/pdf`. The synchronous API is limited to a single-page PDF; use no production or sensitive input for research captures.
+This research CLI calls Vision directly and therefore remains limited to `image/jpeg`, `image/png`, and single-page PDF. The Telegram/service pipeline above is the page-aware path for all supported formats. Use no production or sensitive input for research captures.
 
 ## Local DOCX rendering
 
@@ -69,7 +79,7 @@ Only geometrically confirmed (`detected`) grids become Word tables. Ambiguous or
 
 ## Local Telegram bot
 
-The optional aiogram 3 adapter accepts JPG/PNG images, sends simple results of at most `OCR_INLINE_TEXT_MAX_CHARS` directly to the chat, and sends DOCX for tables or longer content. Inline results include a “Получить DOCX” button. OCR is called only after a user sends an image; starting the bot itself does not invoke Yandex Vision.
+The optional aiogram 3 adapter accepts JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF, and PDF as a photo or document. It sends simple results of at most `OCR_INLINE_TEXT_MAX_CHARS` directly to the chat, and sends DOCX for tables or longer content. Inline results include a “Получить DOCX” button. OCR is called only after a user sends a file; starting the bot itself does not invoke Yandex Vision.
 
 Set `TELEGRAM_BOT_TOKEN` in the untracked `.env`. Before long polling, the adapter calls Telegram `getWebhookInfo` and refuses to start if a webhook is configured. It does not call `deleteWebhook`, so it does not alter a running n8n integration.
 
