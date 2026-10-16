@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 from typing import Any, Protocol
 
+from .cell_recovery import CellRecoveryService
 from ocr_document_bot.document_model import BoundingBox, Document, OCRProvenance, Page, Paragraph, Point, ReadingOrderResolver, Table, TableCell, TableRow
 from ocr_document_bot.domain import InputFile
 from ocr_document_bot.preprocessing import InputPreprocessor, PreparedPage
@@ -26,11 +27,13 @@ class DocumentOCRService:
         preprocessor: InputPreprocessor,
         language_codes: tuple[str, ...] = ("ru", "en"),
         model: str = "page",
+        cell_recovery: CellRecoveryService | None = None,
     ) -> None:
         self._vision = vision
         self._preprocessor = preprocessor
         self._language_codes = language_codes
         self._model = model
+        self._cell_recovery = cell_recovery or CellRecoveryService.from_environment()
 
     def process(self, input_file: InputFile) -> Document:
         pages = []
@@ -44,9 +47,13 @@ class DocumentOCRService:
         source_path = _temporary_image(prepared.image)
         try:
             mapped = document_from_yandex_responses([raw], model=self._model, source_images=[source_path])
+            page = self._cell_recovery.recover(
+                mapped.pages[0], image_path=source_path, vision=self._vision,
+                language_codes=self._language_codes, model=self._model,
+            )
         finally:
             source_path.unlink(missing_ok=True)
-        return mapped.pages[0].model_copy(update={"number": prepared.page_number})
+        return page.model_copy(update={"number": prepared.page_number})
 
     def _native_page(self, prepared: PreparedPage) -> Page:
         assert prepared.native_text is not None

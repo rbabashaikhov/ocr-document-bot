@@ -39,6 +39,8 @@ PDF is processed page by page in source order. A page whose extracted text layer
 
 The current implementation uses synchronous per-page Vision requests. This is deliberately suitable only for bounded interactive jobs. For large documents, OCR-006A recommends a separate asynchronous provider workflow with persistent job state and polling; it is not implemented here because that would require queue/state infrastructure outside this stage.
 
+For ruled tables recovered visually, optional targeted cell recovery is disabled by default. `OCR_ENABLE_CELL_RECOVERY=true` permits a bounded second Vision request only for an empty cell whose cropped interior contains visible ink; `OCR_MAX_CELL_RECOVERY_REQUESTS` caps those requests per source page. This can incur provider charges, so enable it only for an explicitly approved diagnostic or production policy. A failed or empty recovery leaves the first-pass cell unchanged.
+
 ## OCR research CLI
 
 The minimal `httpx` client calls the documented synchronous Vision endpoint only when explicitly authorized. It loads `.env` without overwriting shell environment values and saves the complete provider JSON under `fixtures/vision/`, which is deliberately ignored because it may contain document data.
