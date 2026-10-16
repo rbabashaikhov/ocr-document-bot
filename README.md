@@ -108,4 +108,62 @@ For a manual test after approval, send an attachment from an explicitly allowed 
 
 Processed message identifiers and conservative delivery states are stored in `OCR_EMAIL_STATE_PATH` (default: ignored `local-state/email-adapter.sqlite3`). A response is marked complete only after SMTP returns success. If SMTP times out or disconnects after send may have started, the state becomes `uncertain` and the adapter deliberately does not auto-resend: this avoids duplicate emails but requires operator reconciliation.
 
+## Docker Compose
+
+`Dockerfile` builds one Python 3.12 production image with `uv sync --locked --no-dev`. It contains no `.env` or other secrets: Docker Compose supplies the untracked `.env` only at container runtime. The services have no published ports; they are polling clients.
+
+```bash
+# Inspect resolved configuration without starting anything.
+docker compose config
+
+# Build locally. This does not call Vision, IMAP, SMTP, or Telegram.
+docker compose build
+
+# Explicitly start either adapter, or both.
+docker compose up -d ocr-telegram
+docker compose up -d ocr-email
+docker compose up -d
+
+# Observe and operate each independently.
+docker compose ps
+docker compose logs -f ocr-telegram
+docker compose logs -f ocr-email
+docker compose restart ocr-email
+docker compose stop ocr-telegram
+docker compose down
+```
+
+The email service stores its SQLite ledger in the named volume `ocr-document-bot-email-state`; it survives container recreation and `docker compose down`. Back it up only while the email service is stopped:
+
+```bash
+docker compose stop ocr-email
+docker run --rm -v ocr-document-bot-email-state:/data -v "$PWD":/backup alpine \
+  tar -czf /backup/email-state-backup.tgz -C /data .
+
+# Restore only while ocr-email is stopped, after retaining a separate backup.
+docker run --rm -v ocr-document-bot-email-state:/data -v "$PWD":/backup alpine \
+  tar -xzf /backup/email-state-backup.tgz -C /data
+docker compose up -d ocr-email
+```
+
+For an update without losing email state, leave the named volume intact:
+
+```bash
+docker compose build
+docker compose up -d --no-deps --force-recreate ocr-telegram ocr-email
+```
+
+On a newly created `email-state` volume Docker initializes `/data` from the image with UID `10001`, so the non-root Email process can create SQLite and its journal files. After Docker is available, verify that invariant without starting either poller:
+
+```bash
+docker compose run --rm --no-deps ocr-email \
+  python -c "from pathlib import Path; p = Path('/data/write-check'); p.write_text('ok'); p.unlink()"
+```
+
+For an existing volume with incorrect ownership, stop `ocr-email`, retain a backup, then repair it once as an operator: `docker compose run --rm --user root --no-deps ocr-email chown -R 10001:10001 /data`.
+
+Compose uses `restart: unless-stopped`, so an initial VPS start still requires an explicit operator command such as `docker compose up -d ocr-email`. Do not run a second polling instance with the same Telegram token or IMAP mailbox/state volume.
+
+The Docker healthcheck proves that the adapter process (PID 1) is alive, but polling protocols do not expose a local endpoint and it cannot prove a working Telegram, IMAP, SMTP, or Vision connection. Monitor `docker compose ps`, bounded logs, and an external canary/alert for a real end-to-end availability signal. `OCR_DIAGNOSTICS_DIR` should remain unset in containers unless an explicit writable, access-controlled volume is provisioned.
+
 See [architecture](docs/ARCHITECTURE.md) and the [OCR-001 report](docs/OCR-001-REPORT.md).

@@ -1,0 +1,18 @@
+.git/
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+tests/
+fixtures/
+local-testdata/
+local-diagnostics/
+local-state/
+artifacts/
+docs/
+13.2_recognize file tg.json
