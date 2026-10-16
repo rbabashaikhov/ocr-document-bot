@@ -11,6 +11,7 @@ dist/
 fixtures/vision/*.json
 local-testdata/
 local-diagnostics/
+local-state/
 tests/samples/
 artifacts/ocr-004b/
 artifacts/ocr-004c/

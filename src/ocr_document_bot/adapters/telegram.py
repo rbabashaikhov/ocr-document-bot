@@ -193,14 +193,7 @@ def _languages() -> tuple[str, ...]:
 
 
 def _preprocessor_from_env() -> InputPreprocessor:
-    return InputPreprocessor(
-        _positive_env("OCR_MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
-        max_pages=_positive_env("OCR_MAX_PAGES", 20),
-        max_job_size_bytes=_positive_env("OCR_MAX_JOB_SIZE_BYTES", 25 * 1024 * 1024),
-        pdf_render_dpi=_positive_env("OCR_PDF_RENDER_DPI", 150),
-        max_rendered_pixels=_positive_env("OCR_MAX_RENDERED_PIXELS", 16_000_000),
-        pdf_text_min_chars=_positive_env("OCR_PDF_TEXT_MIN_CHARS", 20),
-    )
+    return InputPreprocessor.from_environment()
 
 
 def _positive_env(name: str, default: int) -> int:

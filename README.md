@@ -1,6 +1,6 @@
 # OCR Bot v2
 
-This repository contains a local, structure-preserving OCR service. The optional Telegram adapter receives files, the shared pipeline builds a provider-neutral Document Model, and it returns inline text or editable DOCX. It has no Email adapter, deployment, LLM, or production n8n integration.
+This repository contains a local, structure-preserving OCR service. Optional Telegram and Email adapters receive files, the shared pipeline builds a provider-neutral Document Model, and it returns inline text or editable DOCX. It has no deployment, LLM, or production n8n integration.
 
 ## Layout
 
@@ -9,7 +9,7 @@ This repository contains a local, structure-preserving OCR service. The optional
 - `src/ocr_document_bot/ocr_engine` — use-case orchestration.
 - `src/ocr_document_bot/providers` — Yandex configuration boundary only.
 - `src/ocr_document_bot/cli.py` — guarded local research CLI; it never calls OCR without an explicit opt-in flag.
-- `src/ocr_document_bot/adapters` — reserved Telegram and Email entry points.
+- `src/ocr_document_bot/adapters` — Telegram and standard IMAP/SMTP Email transport boundaries.
 - `src/ocr_document_bot/renderers` — reserved output boundary.
 - `docs/OCR-001-REPORT.md` — workflow audit, verified API research, risks, and OCR-002 handoff.
 - `docs/OCR-002-REPORT.md` — structured-response research and restoration strategy.
@@ -91,5 +91,21 @@ uv run python -m ocr_document_bot.telegram_bot
 ```
 
 Use a dedicated development bot token for manual testing. Stop the local process with `Ctrl+C`; the optional DOCX button cache is in memory and is cleared when the process stops.
+
+## Local Email adapter
+
+The optional Email adapter uses standard IMAP polling and SMTP; it has no Gmail API dependency. Copy the Email section of `.env.example` into the untracked `.env`, point it at a dedicated test mailbox, and set `OCR_EMAIL_ALLOWED_SENDERS` to a comma-separated list of complete mailbox addresses permitted to invoke OCR. The allowlist is mandatory and compares normalized full addresses only—never a domain or substring. A visible `From` header is not cryptographic proof of identity, so the mailbox host should also enforce SPF/DKIM/DMARC or equivalent controls where available.
+
+The adapter returns only to the normalized `From` address, not `Reply-To`. It rejects automatic/list mail and its own replies, accepts only JPG/JPEG, PNG, WEBP, BMP, TIFF/TIF and PDF names, and applies configured attachment count/size limits before calling the shared service. Content is still decoded and validated by `InputPreprocessor`; MIME headers alone are not trusted.
+
+```bash
+# Do not run this against a production mailbox during OCR-007A.
+uv sync --locked
+uv run python -m ocr_document_bot.email_bot
+```
+
+For a manual test after approval, send an attachment from an explicitly allowed test address. Simple short text is placed in the reply body; a table or long document is returned as `*-ocr-N.docx`. Multiple attachments are numbered in the body. Do not use sensitive documents.
+
+Processed message identifiers and conservative delivery states are stored in `OCR_EMAIL_STATE_PATH` (default: ignored `local-state/email-adapter.sqlite3`). A response is marked complete only after SMTP returns success. If SMTP times out or disconnects after send may have started, the state becomes `uncertain` and the adapter deliberately does not auto-resend: this avoids duplicate emails but requires operator reconciliation.
 
 See [architecture](docs/ARCHITECTURE.md) and the [OCR-001 report](docs/OCR-001-REPORT.md).

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Iterable
+import os
 
 import fitz
 from PIL import Image, ImageSequence, UnidentifiedImageError
@@ -61,6 +62,17 @@ class InputPreprocessor:
         self.pdf_render_dpi = pdf_render_dpi
         self.max_rendered_pixels = max_rendered_pixels
         self.pdf_text_min_chars = pdf_text_min_chars
+
+    @classmethod
+    def from_environment(cls) -> "InputPreprocessor":
+        return cls(
+            _positive_env("OCR_MAX_FILE_SIZE_BYTES", 10 * 1024 * 1024),
+            max_pages=_positive_env("OCR_MAX_PAGES", 20),
+            max_job_size_bytes=_positive_env("OCR_MAX_JOB_SIZE_BYTES", 25 * 1024 * 1024),
+            pdf_render_dpi=_positive_env("OCR_PDF_RENDER_DPI", 150),
+            max_rendered_pixels=_positive_env("OCR_MAX_RENDERED_PIXELS", 16_000_000),
+            pdf_text_min_chars=_positive_env("OCR_PDF_TEXT_MIN_CHARS", 20),
+        )
 
     def prepare(self, input_file: InputFile) -> InputFile:
         """Backward-compatible single-image API used by the original engine."""
@@ -193,3 +205,13 @@ def _native_blocks(page: fitz.Page, tables: Iterable[NativeTable]) -> tuple[Nati
 def _center_inside(inner: tuple[float, float, float, float], outer: tuple[float, float, float, float]) -> bool:
     center_x, center_y = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2
     return outer[0] <= center_x <= outer[2] and outer[1] <= center_y <= outer[3]
+
+
+def _positive_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as error:
+        raise ValueError(f"{name} must be an integer") from error
+    if value < 1:
+        raise ValueError(f"{name} must be positive")
+    return value
